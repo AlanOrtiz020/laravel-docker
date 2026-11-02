@@ -1,0 +1,15 @@
+# Código de la app: es su propio repositorio (git clone ... src)
+/src/
+
+# Configuración con contraseñas: nunca a git (la plantilla .env.production.example sí va)
+.env
+.env.*
+!.env.production.example
+docker-compose.override.yml
+
+# Archivos que genera el servidor
+/actualizar.log
+/.actualizar.lock
+/backup-*.tgz
+*.sql
+*.zip
