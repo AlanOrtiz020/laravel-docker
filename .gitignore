@@ -9,7 +9,9 @@ docker-compose.override.yml
 
 # Archivos que genera el servidor
 /actualizar.log
+/respaldar.log
 /.actualizar.lock
+/backups/
 /backup-*.tgz
 *.sql
 *.zip

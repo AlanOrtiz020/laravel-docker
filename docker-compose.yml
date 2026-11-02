@@ -1,9 +1,10 @@
-# Producción en EC2 (t3.micro) con MySQL 8.4 en Docker.
+# laravel-docker: producción con PHP-FPM + nginx + MySQL en Docker.
+# Las versiones, puertos y nombres se configuran en .env (ver .env.production.example).
 # El código se monta desde ./src: un `git pull` dentro de src/ se ve al instante.
 # Uso:  cp .env.production.example .env  &&  editar  &&  docker compose up -d --build
 
 x-app: &app
-  image: newilvil-app:latest
+  image: ${APP_IMAGE:-laravel-app}:latest
   env_file: .env
   restart: unless-stopped
   volumes:
@@ -14,21 +15,21 @@ x-app: &app
 
 services:
   mysql:
-    image: mysql:8.4
+    image: mysql:${MYSQL_VERSION:-8.4}
     restart: unless-stopped
     environment:
       MYSQL_DATABASE: ${DB_DATABASE}
       MYSQL_USER: ${DB_USERNAME}
       MYSQL_PASSWORD: ${DB_PASSWORD}
       MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
-      TZ: America/Santiago
+      TZ: ${TZ:-UTC}
     volumes:
       - mysql-data:/var/lib/mysql
       - ./docker/mysql/my.cnf:/etc/mysql/conf.d/zz-app.cnf:ro
     # Solo accesible desde la propia EC2 (127.0.0.1), NUNCA desde internet.
     # Para conectarte con DBeaver/Workbench desde tu PC usa un túnel SSH (ver DEPLOY-AWS.md).
     ports:
-      - "127.0.0.1:3306:3306"
+      - "127.0.0.1:${DB_FORWARD_PORT:-3306}:3306"
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
       interval: 10s
@@ -44,6 +45,7 @@ services:
     build:
       context: .
       args:
+        PHP_VERSION: ${PHP_VERSION:-8.5}
         HOST_UID: ${HOST_UID:-1000}
         HOST_GID: ${HOST_GID:-1000}
     environment:
@@ -71,7 +73,7 @@ services:
     image: nginx:1.27-alpine
     restart: unless-stopped
     ports:
-      - "80:80"
+      - "${WEB_PORT:-80}:80"
     volumes:
       - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
       - ./src:/var/www/html:ro

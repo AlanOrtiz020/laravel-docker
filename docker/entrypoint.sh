@@ -14,8 +14,8 @@ if [ -z "$APP_KEY" ]; then
 fi
 
 mkdir -p storage/app/public storage/app/private storage/framework/cache/data \
-         storage/framework/sessions storage/framework/views storage/logs bootstrap/cache respaldos
-chown -R www-data:www-data storage bootstrap/cache respaldos
+         storage/framework/sessions storage/framework/views storage/logs bootstrap/cache
+chown -R www-data:www-data storage bootstrap/cache
 
 # Solo el contenedor "app" (RUN_SETUP=true) instala dependencias y migra
 if [ "${RUN_SETUP:-false}" = "true" ]; then
@@ -27,7 +27,7 @@ if [ "${RUN_SETUP:-false}" = "true" ]; then
     echo "Instalando dependencias PHP (primera vez)..."
     as_app composer install --no-dev --optimize-autoloader --no-interaction
   fi
-  if [ ! -f public/build/manifest.json ]; then
+  if [ -f package.json ] && [ ! -f public/build/manifest.json ]; then
     echo "Compilando assets (primera vez)..."
     as_app npm ci --no-audit --no-fund && as_app npm run build
   fi

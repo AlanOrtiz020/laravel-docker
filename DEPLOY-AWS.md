@@ -1,25 +1,26 @@
-# Despliegue en AWS (EC2 t3.micro + Docker + MySQL en Docker)
+# Despliegue en AWS con laravel-docker (EC2 + Docker + MySQL en Docker)
 
 ```
 Internet ──► EC2 t3.micro (Ubuntu 24.04, Docker)
              ├─ web        nginx :80
-             ├─ app        php-fpm 8.5
-             ├─ queue      queue:work (correos)
+             ├─ app        php-fpm (PHP_VERSION, por defecto 8.5)
+             ├─ queue      queue:work (jobs y correos)
              ├─ scheduler  schedule:work
-             └─ mysql      MySQL 8.4 LTS  (solo 127.0.0.1:3306, datos en volumen "mysql-data")
+             └─ mysql      MySQL LTS (MYSQL_VERSION, por defecto 8.4; solo 127.0.0.1:3306, datos en volumen "mysql-data")
                  ▲
-                 └── /opt/wilvil/src  (git clone, montado como volumen)
+                 └── /opt/miproyecto/src  (git clone, montado como volumen)
 ```
 
-**El código no va dentro de la imagen.** Docker solo aporta el entorno: PHP 8.5, extensiones, composer y node.
+**El código no va dentro de la imagen.** Docker solo aporta el entorno: PHP, extensiones, composer y node.
 La carpeta `src/` del servidor se monta en los contenedores, así que **un `git pull` se ve al instante**.
 
 | Archivo | Para qué |
 |---|---|
-| `Dockerfile` | PHP 8.5-FPM y extensiones (pdo_mysql, gd, zip, intl…), composer y node |
+| `Dockerfile` | PHP-FPM y extensiones (pdo_mysql, gd, zip, intl…), composer y node |
 | `docker-compose.yml` | Servicios `mysql`, `app`, `queue`, `scheduler`, `web` |
 | `.env.production.example` | Plantilla del `.env` de producción |
 | `docker/actualizar.sh` | `git pull` y pasos extra solo cuando hacen falta (manual o por cron) |
+| `docker/respaldar.sh` | Respaldo de la base (mysqldump) y de `storage/app` |
 | `docker/mysql/my.cnf` | MySQL ajustado para 1 GB de RAM |
 | `docker/` | php.ini, pool de FPM, nginx y entrypoint |
 
@@ -27,7 +28,7 @@ Al arrancar por primera vez:
 - MySQL crea la base y el usuario definidos en `.env`.
 - `app` instala `vendor/`, compila los assets y ejecuta `migrate --force`.
 
-Consumo medido: unos **350 MB de RAM** en total (MySQL ~150 MB, PHP ~110 MB y el resto).
+Consumo medido con una app Laravel mediana: unos **350 MB de RAM** en total (MySQL ~150 MB, PHP ~110 MB y el resto).
 
 ---
 
@@ -78,15 +79,15 @@ Pega cada llave en su repo: GitHub → repo → *Settings → Deploy keys → Ad
 Luego clona usando esos alias:
 
 ```bash
-sudo mkdir -p /opt/wilvil && sudo chown $USER: /opt/wilvil
-git clone git@github-docker:AlanOrtiz020/REPO-DOCKER.git /opt/wilvil       # infraestructura
-git clone git@github-app:AlanOrtiz020/newilvil.git       /opt/wilvil/src   # app
+sudo mkdir -p /opt/miproyecto && sudo chown $USER: /opt/miproyecto
+git clone git@github-docker:AlanOrtiz020/laravel-docker.git /opt/miproyecto       # infraestructura
+git clone git@github-app:USUARIO/MI-APP.git              /opt/miproyecto/src   # tu app
 ```
 
 **Actualizar la infraestructura** (si cambias el Dockerfile, nginx, php.ini, etc.):
 
 ```bash
-cd /opt/wilvil && git pull && docker compose up -d --build
+cd /opt/miproyecto && git pull && docker compose up -d --build
 ```
 
 `docker/actualizar.sh` y el cron siguen actualizando **solo la app** (`src/`).
@@ -101,7 +102,7 @@ id -u; id -g               # → HOST_UID / HOST_GID (normalmente 1000)
 nano .env
 ```
 
-- El `.env` va en `/opt/wilvil/.env`, **no en `src/`**. No crees un `src/.env` en el servidor.
+- El `.env` va en `/opt/miproyecto/.env`, **no en `src/`**. No crees un `src/.env` en el servidor.
 - `DB_HOST=mysql`: es el nombre del servicio en Docker, no `127.0.0.1`.
 - Si traes una base existente, usa **la misma `APP_KEY`** que tenía el servidor anterior.
 - **Define las contraseñas de MySQL antes del primer arranque.** MySQL las toma solo la primera vez. Si después cambias `DB_PASSWORD` en el `.env`, tienes que cambiarla también dentro de MySQL con `ALTER USER`.
@@ -116,21 +117,23 @@ curl -I http://localhost/up    # 200
 
 `--build` solo hace falta la primera vez o si cambias el `Dockerfile`. **Nunca por cambios de código.**
 
-## 5. Importar la base de datos actual (importante)
+## 5. Importar una base existente (si corresponde)
 
-Las migraciones **solo crean las tablas base** (users, roles/permisos, cache, jobs, sessions, sueldos).
-Las tablas del negocio (obras, pedidos, compras, materiales…) **no tienen migración**: hay que importarlas.
+Hazlo si traes datos de otro servidor, o si la app **no tiene todas sus tablas en migraciones**, por ejemplo una base creada a mano o heredada.
+Si todo está en migraciones y partes de cero, sáltate este paso: el paso 4 ya las ejecutó.
 
 Sube el respaldo a la EC2 y cárgalo en el contenedor:
 
 ```bash
-scp respaldo.sql ubuntu@TU_IP:/opt/wilvil/          # desde tu PC (si es .zip, descomprímelo antes)
+scp respaldo.sql ubuntu@TU_IP:/opt/miproyecto/          # desde tu PC (si es .zip, descomprímelo antes)
 
-cd /opt/wilvil
+cd /opt/miproyecto
 set -a; . ./.env; set +a
 docker compose exec -T mysql mysql -u root -p"$DB_ROOT_PASSWORD" "$DB_DATABASE" < respaldo.sql
-docker compose exec -u www-data app php artisan migrate --force   # por si faltara alguna migración
+docker compose exec -u www-data app php artisan migrate --force   # aplica las migraciones que falten
 ```
+
+Para un `.sql.gz`: `gunzip -c respaldo.sql.gz | docker compose exec -T mysql mysql -u root -p"$DB_ROOT_PASSWORD" "$DB_DATABASE"`.
 
 ## 6. Conectarte a MySQL desde tu PC (DBeaver, Workbench, HeidiSQL…)
 
@@ -166,7 +169,7 @@ docker compose exec mysql mysql -u root -p
 `docker/actualizar.sh` revisa qué archivos cambiaron y ejecuta solo los pasos que correspondan:
 
 ```bash
-cd /opt/wilvil
+cd /opt/miproyecto
 ./docker/actualizar.sh            # hace el pull y los pasos necesarios
 ./docker/actualizar.sh --todo     # si ya hiciste el git pull a mano: corre todos los pasos
 ```
@@ -175,7 +178,7 @@ cd /opt/wilvil
 
 ```bash
 crontab -e
-*/5 * * * * /opt/wilvil/docker/actualizar.sh >> /opt/wilvil/actualizar.log 2>&1
+*/5 * * * * /opt/miproyecto/docker/actualizar.sh >> /opt/miproyecto/actualizar.log 2>&1
 ```
 
 > No edites archivos directamente en el servidor. Si lo haces, el pull automático se detiene para no pisar tus cambios
@@ -194,39 +197,42 @@ $middleware->trustProxies(at: '*');
 
 Mientras no tengas HTTPS, deja `SESSION_SECURE_COOKIE=false`.
 
-## 9. Respaldos (importante: ahora son responsabilidad tuya)
+## 9. Respaldos (importante: son responsabilidad tuya)
 
 Con MySQL en la misma EC2, **si la instancia o su disco se dañan, se pierden la base y los archivos**.
-Los datos están en tres lugares:
 
 | Qué | Dónde |
 |---|---|
 | Base de datos | Volumen Docker `mysql-data` |
-| PDF y adjuntos subidos | `src/storage/app/` |
-| Respaldos de la app | `src/respaldos/` |
+| Archivos subidos | `src/storage/app/` |
 
-**Respaldo diario automático** (cron a las 03:00): genera el respaldo de la base con el comando de la app y comprime todo:
+`docker/respaldar.sh` genera en `backups/` el dump de la base (`db-*.sql.gz`) y un `.tgz` de `storage/app`.
+Borra los de más de `BACKUP_DAYS` días (7 por defecto).
 
 ```bash
-crontab -e
-0 3 * * * cd /opt/wilvil && docker compose exec -T -u www-data app php artisan respaldo:bd >/dev/null && tar czf /opt/wilvil/backup-$(date +\%F).tgz -C src storage/app respaldos && find /opt/wilvil -name 'backup-*.tgz' -mtime +7 -delete
+./docker/respaldar.sh        # manual
+
+crontab -e                   # automático, todos los días a las 03:00
+0 3 * * * /opt/miproyecto/docker/respaldar.sh >> /opt/miproyecto/respaldar.log 2>&1
 ```
 
 **Saca las copias de la EC2.** Un respaldo que vive en el mismo disco no te salva si se pierde la instancia. Hay dos opciones:
 - **Snapshots automáticos del disco:** en EC2 → *Lifecycle Manager*, crea una política diaria con 7 copias. Cuesta unos centavos al mes.
-- **Bajarlos a tu PC:** `scp ubuntu@TU_IP:/opt/wilvil/backup-*.tgz .`
+- **Bajarlos a tu PC:** `scp ubuntu@TU_IP:/opt/miproyecto/backups/* .`
 
-**Restaurar** un respaldo `.sql`: es el mismo comando del paso 5.
+**Restaurar:**
+- La base: importa el `db-*.sql.gz` como en el paso 5.
+- Los archivos: `tar xzf backups/storage-*.tgz -C src`.
 
 ## Comandos útiles
 
 ```bash
 docker compose exec -u www-data app php artisan tinker
-docker compose exec -u www-data app php artisan respaldo:bd
+./docker/respaldar.sh
 docker compose exec mysql mysql -u root -p
 docker compose logs -f queue mysql
 docker stats --no-stream            # memoria de cada contenedor
 free -h                             # RAM y swap de la EC2
-tail -f /opt/wilvil/src/storage/logs/laravel-$(date +%F).log
-tail -f /opt/wilvil/actualizar.log
+tail -f /opt/miproyecto/src/storage/logs/laravel*.log
+tail -f /opt/miproyecto/actualizar.log
 ```
